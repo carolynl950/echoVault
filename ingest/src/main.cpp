@@ -1,6 +1,8 @@
 // echovault: ingest notes from Obsidian / Notion into Atlas.
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string_view>
 
 #include <curl/curl.h>
@@ -11,17 +13,46 @@
 #include <mongocxx/instance.hpp>
 #include <mongocxx/uri.hpp>
 
+#include "splitter.hpp"
+
 namespace {
 
 int usage() {
     std::cerr << "usage:\n"
                  "  echovault ping                 check the Atlas connection (needs MONGODB_URI)\n"
-                 "  echovault version              print library versions\n";
+                 "  echovault version              print library versions\n"
+                 "  echovault split <file.md>      show how a note is split into passages\n";
     return 2;
 }
 
 int version() {
     std::cout << "libcurl " << curl_version_info(CURLVERSION_NOW)->version << '\n';
+    return 0;
+}
+
+int splitFile(const char* path) {
+    std::ifstream in{path};
+    if (!in) {
+        std::cerr << "cannot open " << path << '\n';
+        return 1;
+    }
+    std::stringstream buf;
+    buf << in.rdbuf();
+
+    auto result = echovault::split(echovault::toLines(buf.str()));
+    if (!result.tags.empty()) {
+        std::cout << "tags:";
+        for (const auto& t : result.tags) std::cout << ' ' << t;
+        std::cout << "\n";
+    }
+    std::cout << result.passages.size() << " passages\n";
+    for (const auto& p : result.passages) {
+        std::cout << "\n── lines " << p.lineStart << "-" << p.lineEnd << " · ~"
+                  << echovault::estimateTokens(p.text) << " tokens · ";
+        if (p.headingPath.empty()) std::cout << "(no heading)";
+        for (std::size_t i = 0; i < p.headingPath.size(); ++i) std::cout << (i ? " › " : "") << p.headingPath[i];
+        std::cout << "\n" << p.text << '\n';
+    }
     return 0;
 }
 
@@ -53,6 +84,7 @@ int main(int argc, char** argv) {
     try {
         if (cmd == "ping") return ping();
         if (cmd == "version") return version();
+        if (cmd == "split" && argc >= 3) return splitFile(argv[2]);
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << '\n';
         return 1;
