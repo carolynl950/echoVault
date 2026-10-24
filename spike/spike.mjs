@@ -45,15 +45,19 @@ await step("server version", async () => {
   return info.version;
 });
 
+// Don't drop the collection: on M0, search indexes on a dropped collection
+// keep counting toward the 3-index cap until their async deletion finishes.
 await step("reset + insert sample docs", async () => {
-  await col.drop().catch(() => {});
-  await db.createCollection("passages");
+  await col.deleteMany({});
   await col.insertMany(docs);
   return `${docs.length} docs`;
 });
 
+const existing = new Set((await col.listSearchIndexes().toArray()).map((i) => i.name));
+const ensureIndex = async (spec) => (existing.has(spec.name) ? "already exists" : col.createSearchIndex(spec));
+
 await step("create autoEmbed vector index", () =>
-  col.createSearchIndex({
+  ensureIndex({
     name: "passages_vector",
     type: "vectorSearch",
     definition: {
@@ -63,7 +67,7 @@ await step("create autoEmbed vector index", () =>
 );
 
 await step("create text search index", () =>
-  col.createSearchIndex({
+  ensureIndex({
     name: "passages_text",
     definition: { mappings: { dynamic: false, fields: { text: { type: "string" } } } },
   }),
@@ -72,28 +76,36 @@ await step("create text search index", () =>
 await step("vector index queryable", () => waitQueryable("passages_vector"));
 await step("text index queryable", () => waitQueryable("passages_text"));
 
+// A query against a missing index silently returns [], so an empty result is a failure here.
+const nonEmpty = (arr) => {
+  if (arr.length === 0) throw new Error("no results");
+  return arr;
+};
+
 const q = "why do I feel tired after eating";
 const vectorStage = { $vectorSearch: { index: "passages_vector", path: "text", query: q, numCandidates: 50, limit: 5 } };
 const searchStage = { $search: { index: "passages_text", text: { query: q, path: "text" } } };
 
 await step("$vectorSearch with query text", async () =>
-  (await col.aggregate([vectorStage, { $project: { _id: 0, text: 1 } }]).toArray()).map((d) => d.text.slice(0, 50)),
+  nonEmpty((await col.aggregate([vectorStage, { $project: { _id: 0, text: 1 } }]).toArray()).map((d) => d.text.slice(0, 50))),
 );
 
 await step("$search keyword", async () =>
-  (await col.aggregate([searchStage, { $limit: 5 }, { $project: { _id: 0, text: 1 } }]).toArray()).map((d) => d.text.slice(0, 50)),
+  nonEmpty((await col.aggregate([searchStage, { $limit: 5 }, { $project: { _id: 0, text: 1 } }]).toArray()).map((d) => d.text.slice(0, 50))),
 );
 
 await step("$rankFusion", async () =>
-  (
-    await col
-      .aggregate([
-        { $rankFusion: { input: { pipelines: { vector: [vectorStage], keyword: [searchStage, { $limit: 5 }] } } } },
-        { $limit: 5 },
-        { $project: { _id: 0, text: 1 } },
-      ])
-      .toArray()
-  ).map((d) => d.text.slice(0, 50)),
+  nonEmpty(
+    (
+      await col
+        .aggregate([
+          { $rankFusion: { input: { pipelines: { vector: [vectorStage], keyword: [searchStage, { $limit: 5 }] } } } },
+          { $limit: 5 },
+          { $project: { _id: 0, text: 1 } },
+        ])
+        .toArray()
+    ).map((d) => d.text.slice(0, 50)),
+  ),
 );
 
 console.log("\nSUMMARY", JSON.stringify(results, null, 2));
