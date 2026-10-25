@@ -28,10 +28,12 @@ Full design: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Decisions and time 
 |---|---|
 | `ingest/` | The C++ command-line tool that reads notes and writes them to Atlas |
 | `spike/` | A throwaway Node.js script that proved Atlas's free tier supports the features we need |
-| `docs/` | Plan, architecture, and (later) eval results |
+| `docs/` | Plan, architecture, eval queries, and (later) eval results |
+| `demo-vault/` | The **fictional sample Obsidian vault** for the public demo: 34 notes from one made-up student (see [Demo notes](#demo-notes)) |
+| `demo-notion/` | 10 fictional **Notion pages** as Markdown files, to import into a throwaway Notion workspace |
 | `GLOSSARY.md` | What Source, Note, Location, and Passage mean in this project |
 | `.env` | Your Atlas connection string. **Never committed** (listed in `.gitignore`) |
-| `web/`, `demo-vault/` | Coming later: the website and the fictional sample notes |
+| `web/` | Coming later: the website |
 
 ### `ingest/` — the C++ tool
 
@@ -157,6 +159,30 @@ Building is two steps:
 
 Before writing anything real, `spike/spike.mjs` checked the riskiest assumption: does Atlas's **free tier (M0)** support automatic embedding and combined (`$rankFusion`) search? It inserts 6 sample notes, builds both indexes, and runs each kind of search. **Result: everything works on M0** (details in `docs/PLAN.md` → Spike results).
 
+### Demo notes
+
+The public demo can't show anyone's real notes, so `demo-vault/` and `demo-notion/` hold notes from one **made-up student** in a sophomore fall semester. Every person in them is fictional.
+
+| Folder | What's in it |
+|---|---|
+| `Classes/Biology` | Cell respiration, photosynthesis, enzymes, membranes, mitosis vs meiosis |
+| `Classes/US History` | Constitutional Convention, Gilded Age, Reconstruction, New Deal, civil rights |
+| `Classes/Intro Programming` | Python loops, recursion, lists/dicts, debugging, a word-counter project |
+| `Classes/Statistics` | Center and spread, sampling bias, normal distribution, hypothesis testing, correlation |
+| `Life/` | Cooking, money (budget, emergency fund, credit cards), books, guitar |
+| `Daily/` | Two messy daily notes with no headings, like real ones |
+| `demo-notion/` | The Notion side: semester plan, study plan, lab report, essay outline, project pages, meal prep, reading list, songs, savings |
+
+The notes are written to **test the search**, not just fill space:
+
+- **Messy on purpose.** Some notes have no headings, and some have tags, `[[links]]`, images, code blocks, tables, and checklists. These exercise every splitter rule.
+- **Decoys.** Some words show up in notes that mean different things: *power* (statistics vs power chords vs separation of powers), *starter* (sourdough vs starter code), *cell* (biology vs spreadsheet). A plain keyword search gets fooled by these; meaning-based search shouldn't.
+- **No shared words.** For some test questions, the right passage deliberately uses none of the question's words ("my fingers hurt when I play" → a passage about sore *fingertips* and *calluses*). Only meaning-based search can find those.
+
+`docs/eval-queries.md` lists 15 test questions and the passage each should find, written **before** running any search so the answers can't be tuned. The first 6 become the example buttons on the search page.
+
+Size: 34 Obsidian notes → 105 passages, 10 Notion pages → 40 passages.
+
 ## Setup
 
 ### Requirements (macOS)
@@ -202,6 +228,22 @@ export $(grep -E '^(MONGODB_URI|NOTION_TOKEN)=' ../.env | xargs)   # load secret
 ./build/echovault ingest notion --root "fall 2026"
 ```
 
+### Load the demo notes (separate Atlas project)
+
+The demo uses its **own** Atlas project so the public site can never see your personal notes.
+
+1. In Atlas, create a new project (e.g. `echovault-demo`) with a free M0 cluster, allow your IP, and add its connection string to `.env` as `DEMO_MONGODB_URI=...`.
+2. Notion side (optional): make a **new free Notion workspace** just for the demo. Create a page called `Sophomore year`, then use **Import → Text & Markdown** to import the 10 files in `demo-notion/`, and drag them under `Sophomore year`. Create an API token in *that* workspace and save it as `DEMO_NOTION_TOKEN=...`.
+3. Run the ingest against the demo cluster:
+   ```
+   cd ingest
+   export MONGODB_URI=$(grep '^DEMO_MONGODB_URI=' ../.env | cut -d= -f2-)
+   export NOTION_TOKEN=$(grep '^DEMO_NOTION_TOKEN=' ../.env | cut -d= -f2-)
+   ./build/echovault init
+   ./build/echovault ingest obsidian ../demo-vault --name demo-vault
+   ./build/echovault ingest notion --root "Sophomore year" --name demo-notion
+   ```
+
 ### Run the spike
 
 ```
@@ -220,8 +262,8 @@ node --env-file=../.env spike.mjs
 | Splitter | ✅ | Cuts notes into passages; 15 tests pass; `echovault split` to try it |
 | Vault reader + sync | ✅ | `echovault init` + `echovault ingest obsidian`; only syncs what changed; hybrid search verified on real data; 24 tests pass |
 | Notion reader | ✅ | `echovault ingest notion --root …`; ~420 real pages → 509 passages; re-runs only fetch edited pages; 33 tests pass |
-| Demo notes | ⏳ next | ~40 fictional student notes |
-| Search API + website | — | Next.js, hybrid search, result cards |
+| Demo notes | ✅ | 34 Obsidian notes + 10 Notion pages from a fictional student, with decoys; 15 eval queries written before any search |
+| Search API + website | ⏳ next | Next.js, hybrid search, result cards |
 | Deploy + eval | — | Live link, hybrid vs. vector vs. keyword comparison |
 
 ## Roadmap (after v1)

@@ -39,7 +39,8 @@ Search your own notes by topic or question and get back the exact passages you w
 ingest/        C++ CLI (CMake)
 web/           Next.js app
 demo-vault/    fictional Obsidian notes
-docs/          PLAN.md, ARCHITECTURE.md, eval results
+demo-notion/   fictional Notion pages (Markdown, imported into a throwaway workspace)
+docs/          PLAN.md, ARCHITECTURE.md, eval-queries.md, eval results
 ```
 
 ## Hour budget
