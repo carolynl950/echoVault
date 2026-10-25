@@ -73,12 +73,9 @@ bsoncxx::document::value passageMetadata(const Note& note, const std::vector<std
                                          const Passage& p) {
     bsoncxx::builder::basic::document doc;
     doc.append(kvp("noteTitle", note.title), kvp("location", toArray(note.location)), kvp("tags", toArray(tags)),
-               kvp("mtime", bsoncxx::types::b_date{note.mtime}));
-    if (note.lineBlockIds.empty()) {
-        doc.append(kvp("lines", make_document(kvp("start", p.lineStart), kvp("end", p.lineEnd))));
-    } else {
-        doc.append(kvp("blockId", firstBlockId(note, p)));
-    }
+               kvp("mtime", bsoncxx::types::b_date{note.mtime}),
+               kvp("lines", make_document(kvp("start", p.lineStart), kvp("end", p.lineEnd))));  // into notes.content
+    if (!note.lineBlockIds.empty()) doc.append(kvp("blockId", firstBlockId(note, p)));
     return doc.extract();
 }
 
