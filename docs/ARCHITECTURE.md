@@ -58,7 +58,7 @@ echovault ingest notion --name <source-name>      # token from NOTION_TOKEN
 Both readers produce the same thing: a Note as a list of markdown-style lines plus its metadata. Everything after this point is source-agnostic.
 
 - **Vault reader:** walks the folder, skips `.obsidian/` and non-`.md` files. Note ID = path relative to the vault root. Location = the folder part of that path.
-- **Notion reader:** starts from the pages shared with the integration, walks child pages and database rows. Note ID = page ID. Location = titles of parent pages, recomputed every run. Converts blocks to lines (`heading_2` → `## …`, `paragraph` → text, `code` → fenced block, and so on). Database row properties are ignored. Respects Notion's ~3 req/s limit.
+- **Notion reader:** lists every page and database the token can see via the search endpoint (each with parent and `last_edited_time`), builds the tree locally, and keeps pages under the `--root` page(s). Note ID = page ID. Location = titles from the root down (unnamed databases omitted), recomputed every run. Only changed pages have their blocks fetched; blocks become lines (`heading_2` → `## …`, `paragraph` → text, `code` → fenced block, lists, toggles, tables…), each line remembering its block ID. Database row properties are ignored. Pages with identical bodies (unfilled templates) are skipped. Paces requests under Notion's ~3 req/s limit and retries 429/5xx. API version `2022-06-28`.
 
 ### Splitter
 
@@ -75,11 +75,12 @@ The splitter is pure (lines in, Passages out) so it is unit-tested without a dat
 
 Passage identity is a content hash, so sync is set arithmetic. Per Source:
 
-1. For each Note: hash each Passage (`sha256(headingPath + text)`), load the existing hashes for that Note, **insert** new hashes, **delete** missing ones. Unchanged Passages are untouched and never re-embedded.
-2. Upsert the Note's row in `notes`.
-3. Delete Passages and `notes` rows for Notes no longer present in the Source.
+1. **Skip unchanged Notes.** If the hash of the whole Note matches `notes.contentHash`, nothing in it changed; move on.
+2. For each changed Note: hash each Passage (`sha256(headingPath + text)`), load the existing hashes for that Note, **insert** new hashes, **delete** missing ones, and for hashes that stayed, **refresh metadata only** (line numbers, location, tags). The `text` field isn't touched, so kept Passages are never re-embedded.
+3. Upsert the Note's row in `notes`.
+4. Delete Passages and `notes` rows for Notes no longer present in the Source.
 
-For Notion, step 1 is skipped entirely for pages whose `last_edited_time` matches the one stored in `notes`. Obsidian has no such shortcut in v1; reading local files is cheap and the hash diff does the work.
+For Notion, pages whose `last_edited_time` matches the stored one are skipped before their content is even fetched. Skipped Notes still get their title and Location refreshed if they changed (a page renamed or moved in Notion), without touching `text`.
 
 ## Data model
 
@@ -106,18 +107,20 @@ Unique index on `{ "source.name": 1, noteId: 1, hash: 1 }`.
 
 ### `notes`
 
-One row per Note. Backs the read-only note page and the Notion skip check.
+One row per Note. Backs the read-only note page and the skip-unchanged check.
 
 ```js
 {
   _id: "<source.name>:<noteId>",
   source: { kind, name },
   noteId, title, location,
-  url: "obsidian://…" | "https://www.notion.so/…",
-  lastEdited: ISODate,        // Notion last_edited_time, or file mtime
-  text: "…full cleaned note…" // for the note page
+  content: "…raw note…",       // for the note page; line numbers match passages.lines
+  contentHash: "sha256…",      // whole-note hash; equal → skip on re-ingest
+  lastEdited: ISODate          // Notion last_edited_time, or file mtime
 }
 ```
+
+Links (`obsidian://…`, Notion URLs) are built by the web app from `source` + `noteId`, since which link to show depends on demo vs. personal mode.
 
 ## Search
 
@@ -126,7 +129,7 @@ One row per Note. Backs the read-only note page and the Notion skip check.
 - **Vector index** on `passages.text` with Automated Embedding (Voyage). Atlas embeds Passages on write and the query text at search time, so no embedding key lives in the web app.
 - **Search index** on `text`, `noteTitle`, `headingPath` (standard analyzer), with highlighting on `text`.
 
-Index definitions are checked in under `docs/indexes/*.json`.
+Index definitions live in `ingest/src/store.cpp`; `echovault init` creates any that are missing (plus a unique index on `{source.name, noteId, hash}`).
 
 ### Query
 

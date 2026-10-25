@@ -39,7 +39,7 @@ Search your own notes by topic or question and get back the exact passages you w
 ingest/        C++ CLI (CMake)
 web/           Next.js app
 demo-vault/    fictional Obsidian notes
-docs/          PLAN.md, architecture diagram, eval results, indexes/*.json
+docs/          PLAN.md, ARCHITECTURE.md, eval results
 ```
 
 ## Hour budget
